@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aerospace/sat-telemetry-api/internal/anomaly"
 	"github.com/aerospace/sat-telemetry-api/internal/ccsds"
 	"github.com/aerospace/sat-telemetry-api/internal/store"
 )
@@ -42,9 +43,14 @@ type PointWriter interface {
 
 type TelemetryPoint = store.TelemetryPoint
 
+type AnomalySubmitter interface {
+	Submit(point *store.TelemetryPoint) bool
+}
+
 type Pipeline struct {
 	scanner    *ccsds.FrameScanner
 	writer     PointWriter
+	anomaly    AnomalySubmitter
 	mu         sync.Mutex
 	frameCount int64
 	parseErrs  int64
@@ -56,6 +62,15 @@ func New(frameSize int, writer PointWriter) *Pipeline {
 		scanner: ccsds.NewFrameScanner(frameSize),
 		writer:  writer,
 	}
+}
+
+func (p *Pipeline) SetAnomalyDetector(detector AnomalySubmitter) {
+	p.anomaly = detector
+}
+
+func (p *Pipeline) WithAnomalyDetector(detector *anomaly.Detector) *Pipeline {
+	p.anomaly = detector
+	return p
 }
 
 func resolveByteOrder(apid uint16) ByteOrder {
@@ -95,9 +110,13 @@ func (p *Pipeline) processFrame(data []byte) {
 
 	for _, pkt := range frame.Packets {
 		points := p.extractTelemetry(pkt)
-		for _, pt := range points {
-			cleaned := store.CleanPoint(pt)
+		for i := range points {
+			cleaned := store.CleanPoint(points[i])
 			p.writer.Write(cleaned)
+			if p.anomaly != nil {
+				ptCopy := cleaned
+				p.anomaly.Submit(&ptCopy)
+			}
 		}
 	}
 }

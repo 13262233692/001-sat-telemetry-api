@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package alert;
+
+option go_package = "github.com/aerospace/sat-telemetry-api/proto/alert";
+
+enum AlertSeverity {
+  SEVERITY_UNKNOWN = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
+  SEVERITY_CRITICAL = 4;
+}
+
+enum AlertType {
+  ALERT_TYPE_UNKNOWN = 0;
+  ALERT_TYPE_TEMPERATURE_GRADIENT = 1;
+  ALERT_TYPE_TEMPERATURE_ZSCORE = 2;
+  ALERT_TYPE_TEMPERATURE_OVER_LIMIT = 3;
+}
+
+message TemperatureAlertFrame {
+  string alert_id = 1;
+  AlertType alert_type = 2;
+  AlertSeverity severity = 3;
+  int64 timestamp_unix_ms = 4;
+  int32 apid = 5;
+  int32 sensor_id = 6;
+  double current_value = 7;
+  double gradient_rate = 8;
+  double z_score = 9;
+  double window_mean = 10;
+  double window_stddev = 11;
+  double dynamic_threshold = 12;
+  int32 window_samples = 13;
+  string sensor_name = 14;
+  string description = 15;
+}
+
+message AlertResponse {
+  bool accepted = 1;
+  string request_id = 2;
+  string error_message = 3;
+}
+
+service AlertService {
+  rpc PushTemperatureAlert(TemperatureAlertFrame) returns (AlertResponse);
+}
