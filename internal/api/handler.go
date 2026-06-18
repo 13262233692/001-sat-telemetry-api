@@ -232,11 +232,14 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pending, dropped := h.writer.Stats()
+	retried, deadDropped := h.writer.DeadLetterStats()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"pending_points":  pending,
-		"dropped_points":  dropped,
-		"buffer_capacity": h.writer.BufferCapacity(),
+		"pending_points":    pending,
+		"dropped_points":    dropped,
+		"retried_points":    retried,
+		"dead_dropped_points": deadDropped,
+		"buffer_capacity":  h.writer.BufferCapacity(),
 	})
 }
 

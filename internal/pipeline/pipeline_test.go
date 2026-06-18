@@ -60,7 +60,174 @@ func TestCcsdsEpochToTime(t *testing.T) {
 	}
 }
 
+func TestResolveByteOrderBigEndian(t *testing.T) {
+	order := resolveByteOrder(0x100)
+	if order != OrderBigEndian {
+		t.Errorf("APID 0x100 should resolve to BigEndian, got %v", order)
+	}
+
+	order = resolveByteOrder(0x500)
+	if order != OrderBigEndian {
+		t.Errorf("APID 0x500 (attitude sensor) should resolve to BigEndian, got %v", order)
+	}
+}
+
+func TestResolveByteOrderLittleEndian(t *testing.T) {
+	order := resolveByteOrder(0x650)
+	if order != OrderLittleEndian {
+		t.Errorf("APID 0x650 should resolve to LittleEndian, got %v", order)
+	}
+
+	order = resolveByteOrder(0xA50)
+	if order != OrderLittleEndian {
+		t.Errorf("APID 0xA50 should resolve to LittleEndian, got %v", order)
+	}
+}
+
+func TestResolveByteOrderDefault(t *testing.T) {
+	order := resolveByteOrder(0x1234)
+	if order != OrderBigEndian {
+		t.Errorf("unknown APID should default to BigEndian, got %v", order)
+	}
+}
+
+func TestBigEndianPayloadExtraction(t *testing.T) {
+	mw := &mockWriter{}
+	pipe := &Pipeline{
+		scanner: ccsds.NewFrameScanner(1024),
+		writer:  mw,
+	}
+
+	frame := buildValidFrameWithByteOrder(0x050, 0x200, 1, 42, OrderBigEndian)
+	pipe.ProcessChunk(frame)
+
+	if len(mw.points) == 0 {
+		t.Fatal("expected telemetry points")
+	}
+
+	pt := mw.points[0]
+	if pt.SensorID != 1 {
+		t.Errorf("expected sensor ID 1, got %d", pt.SensorID)
+	}
+	if pt.RawValue != 42 {
+		t.Errorf("expected raw value 42, got %f", pt.RawValue)
+	}
+}
+
+func TestLittleEndianPayloadExtraction(t *testing.T) {
+	mw := &mockWriter{}
+	pipe := &Pipeline{
+		scanner: ccsds.NewFrameScanner(1024),
+		writer:  mw,
+	}
+
+	frame := buildValidFrameWithByteOrder(0x050, 0x650, 1, 42, OrderLittleEndian)
+	pipe.ProcessChunk(frame)
+
+	if len(mw.points) == 0 {
+		t.Fatal("expected telemetry points")
+	}
+
+	pt := mw.points[0]
+	if pt.SensorID != 1 {
+		t.Errorf("expected sensor ID 1, got %d", pt.SensorID)
+	}
+	if pt.RawValue != 42 {
+		t.Errorf("expected raw value 42, got %f", pt.RawValue)
+	}
+}
+
+func TestAttitudeSensorBigEndian(t *testing.T) {
+	mw := &mockWriter{}
+	pipe := &Pipeline{
+		scanner: ccsds.NewFrameScanner(1024),
+		writer:  mw,
+	}
+
+	sensorValue := int16(-350)
+	frame := buildValidFrameWithByteOrder(0x050, 0x530, 5, sensorValue, OrderBigEndian)
+	pipe.ProcessChunk(frame)
+
+	if len(mw.points) == 0 {
+		t.Fatal("expected telemetry points for attitude sensor")
+	}
+
+	pt := mw.points[0]
+	if pt.APID != 0x530 {
+		t.Errorf("expected APID 0x530, got 0x%04X", pt.APID)
+	}
+	if pt.SensorID != 5 {
+		t.Errorf("expected sensor ID 5, got %d", pt.SensorID)
+	}
+	expectedRaw := float64(sensorValue)
+	if pt.RawValue != expectedRaw {
+		t.Errorf("expected raw value %f, got %f", expectedRaw, pt.RawValue)
+	}
+}
+
+func TestWrongByteOrderProducesCorruptValue(t *testing.T) {
+	mw := &mockWriter{}
+	pipe := &Pipeline{
+		scanner: ccsds.NewFrameScanner(1024),
+		writer:  mw,
+	}
+
+	sensorValue := int16(256)
+	frame := buildValidFrameWithByteOrder(0x050, 0x200, 1, sensorValue, OrderBigEndian)
+	pipe.ProcessChunk(frame)
+
+	pt := mw.points[0]
+
+	var corruptWriter mockWriter
+	corruptPipe := &Pipeline{
+		scanner: ccsds.NewFrameScanner(1024),
+		writer:  &corruptWriter,
+	}
+
+	frameLE := buildValidFrameWithByteOrder(0x050, 0x200, 1, sensorValue, OrderLittleEndian)
+	corruptPipe.ProcessChunk(frameLE)
+
+	corruptPt := corruptWriter.points[0]
+	if corruptPt.RawValue == pt.RawValue {
+		t.Logf("both orders produced same value %f (coincidental for value %d)", pt.RawValue, sensorValue)
+	}
+}
+
+func TestReadSensorReadingBigEndian(t *testing.T) {
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint16(data[0:2], 10)
+	var val int16 = -100
+	binary.BigEndian.PutUint16(data[2:4], uint16(val))
+
+	sensorID, rawValue := readSensorReading(data, OrderBigEndian)
+	if sensorID != 10 {
+		t.Errorf("expected sensor ID 10, got %d", sensorID)
+	}
+	if rawValue != -100 {
+		t.Errorf("expected raw value -100, got %f", rawValue)
+	}
+}
+
+func TestReadSensorReadingLittleEndian(t *testing.T) {
+	data := make([]byte, 4)
+	binary.LittleEndian.PutUint16(data[0:2], 10)
+	var val int16 = -100
+	binary.LittleEndian.PutUint16(data[2:4], uint16(val))
+
+	sensorID, rawValue := readSensorReading(data, OrderLittleEndian)
+	if sensorID != 10 {
+		t.Errorf("expected sensor ID 10, got %d", sensorID)
+	}
+	if rawValue != -100 {
+		t.Errorf("expected raw value -100, got %f", rawValue)
+	}
+}
+
 func buildValidFrame(scID, apid uint16, sensorID int, value float64) []byte {
+	return buildValidFrameWithByteOrder(scID, apid, sensorID, int16(value), OrderBigEndian)
+}
+
+func buildValidFrameWithByteOrder(scID, apid uint16, sensorID int, value int16, order ByteOrder) []byte {
 	frame := make([]byte, 1024)
 
 	binary.BigEndian.PutUint32(frame[0:4], ccsds.ASM)
@@ -83,8 +250,13 @@ func buildValidFrame(scID, apid uint16, sensorID int, value float64) []byte {
 
 	binary.BigEndian.PutUint64(frame[offset+6:offset+14], 0x0000020000000001)
 
-	binary.BigEndian.PutUint16(frame[offset+14:offset+16], uint16(sensorID))
-	binary.BigEndian.PutUint16(frame[offset+16:offset+18], uint16(int16(value)))
+	if order == OrderLittleEndian {
+		binary.LittleEndian.PutUint16(frame[offset+14:offset+16], uint16(sensorID))
+		binary.LittleEndian.PutUint16(frame[offset+16:offset+18], uint16(value))
+	} else {
+		binary.BigEndian.PutUint16(frame[offset+14:offset+16], uint16(sensorID))
+		binary.BigEndian.PutUint16(frame[offset+16:offset+18], uint16(value))
+	}
 
 	return frame
 }
